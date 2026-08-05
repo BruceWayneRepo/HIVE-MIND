@@ -70,8 +70,7 @@ export async function renderGrid(gridEl, items) {
   gridEl.innerHTML = html.join('');
 }
 
-export function renderRails({ items, typeList, colorList, tagList, spaceList, spaces }) {
-  // types
+export function renderRails({ items, typeList, colorList, tagList }) {
   const typeCounts = {};
   const colorCounts = {};
   const tagCounts = {};
@@ -80,8 +79,9 @@ export function renderRails({ items, typeList, colorList, tagList, spaceList, sp
     for (const c of i.colorNames || []) colorCounts[c] = (colorCounts[c] || 0) + 1;
     for (const t of i.tags || []) tagCounts[t] = (tagCounts[t] || 0) + 1;
   }
-  typeList.innerHTML = Object.entries(typeCounts).sort((a, b) => b[1] - a[1])
-    .map(([t, n]) => `<button class="chip" data-type="${t}">${t} ${n}</button>`).join('') ||
+  const TYPE_LABEL = { note: 'Notes', link: 'Links', image: 'Images', pdf: 'PDFs', voice: 'Voice', quote: 'Quotes' };
+  typeList.innerHTML = Object.keys(typeCounts).sort()
+    .map((t) => `<button class="chip" data-type="${t}">${TYPE_LABEL[t] || (t.charAt(0).toUpperCase() + t.slice(1))}</button>`).join('') ||
     '<span class="hint">—</span>';
 
   const SW = { red:'#c83737',orange:'#dc8232',yellow:'#e1c846',green:'#5aaf5f',teal:'#46b4af',
@@ -93,10 +93,6 @@ export function renderRails({ items, typeList, colorList, tagList, spaceList, sp
   tagList.innerHTML = Object.entries(tagCounts).sort((a, b) => b[1] - a[1]).slice(0, 24)
     .map(([t]) => `<button class="chip" data-tag="${esc(t)}">${esc(t)}</button>`).join('') ||
     '<span class="hint">—</span>';
-
-  spaceList.innerHTML = spaces
-    .map((s) => `<button class="space" data-space="${esc(s)}">${esc(s)}</button>`).join('') ||
-    '<span class="hint" style="padding:0 6px">No spaces yet</span>';
 }
 
 export async function detailHTML(item) {

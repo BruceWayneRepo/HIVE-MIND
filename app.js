@@ -132,11 +132,12 @@ async function refresh() {
   emptyEl.classList.toggle('hidden', ITEMS.length !== 0);
   await renderGrid(grid, list);
   renderRails({
-    items: ITEMS, typeList: $('#typeList'), colorList: $('#colorList'),
-    tagList: $('#tagList'), spaceList: $('#spaceList'), spaces: getSpaces(),
+    items: ITEMS, typeList: $('#typeList'), colorList: $('#colorList'), tagList: $('#tagList'),
   });
+  renderViews();
   syncActiveStates();
   renderSerendipity();
+  updateBackBtn();
 }
 
 function getSpaces() {
@@ -146,8 +147,6 @@ function getSpaces() {
 }
 
 function syncActiveStates() {
-  document.querySelectorAll('.rail .space').forEach((b) =>
-    b.classList.toggle('active', b.dataset.space === filters.space));
   document.querySelectorAll('#typeList .chip').forEach((b) =>
     b.classList.toggle('active', b.dataset.type === filters.type));
   document.querySelectorAll('#tagList .chip').forEach((b) =>
@@ -557,15 +556,25 @@ function wire() {
     [...e.target.files].forEach(saveImageFile); e.target.value = '';
   });
 
-  // grid + serendipity click
-  document.addEventListener('click', (e) => {
+  // grid: TAP opens item directly; LONG-PRESS opens context menu
+  const main = document.querySelector('.main');
+  main.addEventListener('click', (e) => {
     const card = e.target.closest('.card');
-    if (card && card.dataset.id) openDetail(card.dataset.id);
+    if (card && card.dataset.id && !card._longPressed) openItem(card.dataset.id);
+    if (card) card._longPressed = false;
+  });
+  attachLongPress(main);
+  main.addEventListener('contextmenu', (e) => {
+    const card = e.target.closest('.card'); if (!card) return;
+    e.preventDefault(); showCtxMenu(card.dataset.id, e.clientX, e.clientY);
   });
 
-  // rails
-  $('#spaceList').addEventListener('click', railFilter);
-  document.querySelector('.rail .spaces').addEventListener('click', railFilter);
+  // views rail
+  $('#viewList').addEventListener('click', onViewClick);
+  $('#addView').addEventListener('click', addView);
+  $('#editViews').addEventListener('click', () => {
+    document.querySelector('.rail').classList.toggle('editing');
+  });
   $('#typeList').addEventListener('click', (e) => {
     const b = e.target.closest('[data-type]'); if (!b) return;
     filters.type = filters.type === b.dataset.type ? null : b.dataset.type; refresh();
@@ -578,33 +587,38 @@ function wire() {
     const b = e.target.closest('[data-color]'); if (!b) return;
     filters.color = filters.color === b.dataset.color ? null : b.dataset.color; refresh();
   });
-  $('#addSpace').addEventListener('click', async () => {
-    const name = prompt('New space name'); if (!name) return;
-    // spaces are created by assigning; make an empty marker by tagging nothing.
-    toast(`Add items to "${name}" from their detail view`); // simple v1
-  });
 
-  // settings
+  // settings + back
   $('#settingsBtn').addEventListener('click', openSettings);
-  // mobile filter drawer
+  $('#backBtn').addEventListener('click', goBack);
   const rail = document.querySelector('.rail');
   const scrim = $('#railScrim');
   const openRail = () => { rail.classList.add('open'); scrim.classList.add('show'); };
   const closeRail = () => { rail.classList.remove('open'); scrim.classList.remove('show'); };
   $('#menuBtn').addEventListener('click', openRail);
   scrim.addEventListener('click', closeRail);
-  rail.addEventListener('click', (e) => { if (e.target.closest('[data-space],[data-type],[data-tag],[data-color]')) closeRail(); });
+  rail.addEventListener('click', (e) => { if (e.target.closest('[data-view],[data-type],[data-tag],[data-color]')) closeRail(); });
   $('#brandBtn').addEventListener('click', () => toast('mind — your private place to save everything'));
   document.querySelectorAll('[data-close]').forEach((el) => el.addEventListener('click', closeSheets));
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSheets(); });
+  document.querySelectorAll('[data-close-viewer]').forEach((el) => el.addEventListener('click', closeViewer));
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeCtx(); closeViewer(); closeSheets(); } });
 
-  $('#exportBtn').addEventListener('click', exportJSON);
-  $('#syncBtn').addEventListener('click', openSettings);
-  $('#exportJson').addEventListener('click', exportJSON);
-  $('#exportCsv').addEventListener('click', exportCSV);
+  // data export dropdown
+  $('#exportGo').addEventListener('click', () => {
+    ($('#exportFormat').value === 'csv') ? exportCSV() : exportJSON();
+  });
   $('#importBtn').addEventListener('click', () => $('#importInput').click());
   $('#importInput').addEventListener('change', (e) => { if (e.target.files[0]) importJSON(e.target.files[0]); });
   $('#fbConnect').addEventListener('click', connectFirebase);
+
+  // theme
+  $('#themeSeg').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-theme]'); if (!b) return; setTheme(b.dataset.theme);
+  });
+  // developer box reveal
+  $('#aiEdit').addEventListener('click', () => $('#devBox').classList.remove('hidden'));
+  $('#syncEdit').addEventListener('click', () => $('#devBox').classList.remove('hidden'));
+  $('#devClose').addEventListener('click', () => $('#devBox').classList.add('hidden'));
 
   // drag & drop anywhere
   const app = $('#app');
@@ -629,6 +643,215 @@ function wire() {
     const text = e.clipboardData?.getData('text');
     if (text) quickSave(text);
   });
+
+  // keyboard-safe capture bar (raise above on-screen keyboard / Pencil)
+  if (window.visualViewport) {
+    const vv = window.visualViewport;
+    const adjust = () => {
+      const kb = Math.max(0, (window.innerHeight - vv.height - vv.offsetTop));
+      document.documentElement.style.setProperty('--kb', kb + 'px');
+    };
+    vv.addEventListener('resize', adjust);
+    vv.addEventListener('scroll', adjust);
+  }
+}
+
+/* ---------------- editable views ---------------- */
+function loadViews() {
+  try { const v = JSON.parse(localStorage.getItem('mind.views')); if (Array.isArray(v) && v.length) return v; } catch {}
+  return [
+    { id: 'all', name: 'Everything', kind: 'all' },
+    { id: 'unread', name: 'Unread', kind: 'unread' },
+    { id: 'serendipity', name: 'Serendipity', kind: 'serendipity' },
+  ];
+}
+let VIEWS = loadViews();
+let activeView = VIEWS[0].id;
+function saveViews() { localStorage.setItem('mind.views', JSON.stringify(VIEWS)); }
+function renderViews() {
+  const el = $('#viewList');
+  el.innerHTML = VIEWS.map((v, i) => `
+    <div class="view-row">
+      <button class="space ${v.id === activeView ? 'active' : ''}" data-view="${v.id}">${esc(v.name)}</button>
+      <span class="view-edit-controls">
+        <button data-vmove="up" data-i="${i}" title="Up">▲</button>
+        <button data-vmove="down" data-i="${i}" title="Down">▼</button>
+        <button data-vrename="${v.id}" title="Rename">✎</button>
+        <button data-vdel="${v.id}" title="Delete">✕</button>
+      </span>
+    </div>`).join('');
+}
+function onViewClick(e) {
+  const mv = e.target.closest('[data-vmove]');
+  if (mv) { moveView(+mv.dataset.i, mv.dataset.vmove); return; }
+  const rn = e.target.closest('[data-vrename]');
+  if (rn) { renameView(rn.dataset.vrename); return; }
+  const dl = e.target.closest('[data-vdel]');
+  if (dl) { deleteView(dl.dataset.vdel); return; }
+  const b = e.target.closest('[data-view]');
+  if (b) applyView(b.dataset.view);
+}
+function applyView(id) {
+  const v = VIEWS.find((x) => x.id === id); if (!v) return;
+  activeView = id;
+  filters = { space: v.kind === 'custom' ? '__all' : '__' + v.kind, type: null, color: null, tag: null };
+  query = v.kind === 'custom' ? (v.query || '') : '';
+  $('#search').value = query;
+  refresh();
+}
+function addView() {
+  const name = prompt('Name this view (it saves your current search + filters):');
+  if (!name) return;
+  const v = { id: 'v' + Date.now().toString(36), name, kind: 'custom', query: query || '' };
+  VIEWS.push(v); saveViews(); applyView(v.id);
+}
+function renameView(id) {
+  const v = VIEWS.find((x) => x.id === id); if (!v) return;
+  const name = prompt('Rename view:', v.name); if (!name) return;
+  v.name = name; saveViews(); renderViews();
+}
+function deleteView(id) {
+  if (VIEWS.length <= 1) { toast('Keep at least one view'); return; }
+  if (!confirm('Delete this view?')) return;
+  VIEWS = VIEWS.filter((x) => x.id !== id); saveViews();
+  if (activeView === id) applyView(VIEWS[0].id); else renderViews();
+}
+function moveView(i, dir) {
+  const j = dir === 'up' ? i - 1 : i + 1;
+  if (j < 0 || j >= VIEWS.length) return;
+  [VIEWS[i], VIEWS[j]] = [VIEWS[j], VIEWS[i]]; saveViews(); renderViews();
+}
+
+/* ---------------- tap-to-open ---------------- */
+async function openItem(id) {
+  const item = ITEMS.find((i) => i.id === id); if (!item) return;
+  if (!item.read) { item.read = true; db.putItem(item); fb.push(item).catch(() => {}); }
+  if (item.type === 'link' && item.url) { window.open(item.url, '_blank'); return; }
+  if (item.type === 'pdf') {
+    const ok = await ensureBlob(item);
+    if (!ok) { toast('File not on this device — reconnect Google to fetch'); return; }
+    const url = await db.blobURL(item.blobId); if (url) window.open(url, '_blank');
+    return;
+  }
+  if (item.type === 'image') {
+    const ok = await ensureBlob(item);
+    if (!ok) { toast('Image not on this device — reconnect Google to fetch'); return; }
+    const url = await db.blobURL(item.blobId);
+    openViewer(`<button class="viewer-close" data-close-viewer>✕</button><img src="${url}" alt="">`);
+    return;
+  }
+  if (item.type === 'voice') {
+    const ok = await ensureBlob(item);
+    const url = ok ? await db.blobURL(item.blobId) : null;
+    openViewer(`<button class="viewer-close" data-close-viewer>✕</button>
+      <h3 class="serif" style="margin-top:0">Voice note</h3>
+      ${url ? `<audio controls autoplay src="${url}"></audio>` : '<p class="hint">Audio not on this device.</p>'}
+      ${item.text ? `<p style="margin-top:14px;line-height:1.6">${esc(item.text)}</p>` : ''}`);
+    return;
+  }
+  // note / quote → quick editor
+  openEditor(item);
+}
+function openViewer(html) {
+  const v = $('#viewer'); $('#viewerBody').innerHTML = html;
+  v.classList.remove('hidden');
+  v.querySelectorAll('[data-close-viewer]').forEach((el) => el.addEventListener('click', closeViewer));
+}
+function closeViewer() { $('#viewer').classList.add('hidden'); $('#viewerBody').innerHTML = ''; }
+function openEditor(item) {
+  openViewer(`<button class="viewer-close" data-close-viewer>✕</button>
+    <h3 class="serif" style="margin-top:0">Edit</h3>
+    <textarea class="viewer-edit" id="editArea">${esc(item.text || '')}</textarea>`);
+  const ta = $('#editArea'); ta.focus();
+  ta.addEventListener('blur', async () => {
+    item.text = ta.value; if (item.type === 'note') item.title = ta.value.split('\n')[0].slice(0, 80);
+    item.updated = now(); await db.putItem(item); ITEMS = await db.allItems(); refresh(); fb.push(item).catch(() => {});
+  });
+}
+
+/* ---------------- long-press context menu ---------------- */
+function attachLongPress(container) {
+  let timer = null, sx = 0, sy = 0;
+  container.addEventListener('touchstart', (e) => {
+    const card = e.target.closest('.card'); if (!card) return;
+    const t = e.touches[0]; sx = t.clientX; sy = t.clientY;
+    timer = setTimeout(() => {
+      card._longPressed = true;
+      if (navigator.vibrate) navigator.vibrate(8);
+      showCtxMenu(card.dataset.id, sx, sy);
+    }, 480);
+  }, { passive: true });
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  container.addEventListener('touchmove', (e) => {
+    const t = e.touches[0]; if (Math.abs(t.clientX - sx) > 10 || Math.abs(t.clientY - sy) > 10) cancel();
+  }, { passive: true });
+  container.addEventListener('touchend', cancel);
+  container.addEventListener('touchcancel', cancel);
+}
+function showCtxMenu(id, x, y) {
+  const item = ITEMS.find((i) => i.id === id); if (!item) return;
+  const m = $('#ctxMenu');
+  m.innerHTML = `
+    <button data-cx="open">Open</button>
+    <button data-cx="edit">Edit text</button>
+    <button data-cx="summarise">✦ Auto-summarise</button>
+    <button data-cx="fav">${item.fav ? '★ Unfavourite' : '☆ Favourite'}</button>
+    <div class="ctx-sep"></div>
+    <button data-cx="delete" class="danger">Delete</button>`;
+  m.classList.remove('hidden');
+  const mw = 200, mh = m.offsetHeight || 220;
+  m.style.left = Math.min(x, window.innerWidth - mw - 10) + 'px';
+  m.style.top = Math.min(y, window.innerHeight - mh - 10) + 'px';
+  m.querySelectorAll('[data-cx]').forEach((b) => b.addEventListener('click', () => { ctxAction(b.dataset.cx, item); closeCtx(); }));
+  setTimeout(() => document.addEventListener('click', closeCtx, { once: true }), 0);
+}
+function closeCtx() { $('#ctxMenu').classList.add('hidden'); }
+async function ctxAction(act, item) {
+  if (act === 'open') return openItem(item.id);
+  if (act === 'edit') return openEditor(item);
+  if (act === 'fav') {
+    item.fav = !item.fav; item.updated = now(); await db.putItem(item);
+    ITEMS = await db.allItems(); refresh(); fb.push(item).catch(() => {}); return;
+  }
+  if (act === 'delete') {
+    if (!confirm('Delete this from your mind?')) return;
+    await db.deleteItem(item.id); fb.pushDelete(item.id).catch(() => {});
+    ITEMS = await db.allItems(); refresh(); toast('Deleted'); return;
+  }
+  if (act === 'summarise') {
+    if (!ai.hasKey()) { toast('Add an AI key in Settings → AI ✎'); return; }
+    toast('Thinking…');
+    try {
+      const { tags, summary } = await ai.enrich(item);
+      if (tags.length) item.tags = [...new Set([...(item.tags || []), ...tags])];
+      if (summary) item.summary = summary;
+      item.updated = now(); await db.putItem(item); ITEMS = await db.allItems(); refresh(); fb.push(item).catch(() => {});
+      toast('Summarised');
+    } catch (e) { toast(e.message); }
+  }
+}
+
+/* ---------------- theme + back ---------------- */
+function setTheme(t) {
+  document.body.setAttribute('data-theme', t);
+  localStorage.setItem('mind.theme', t);
+  document.querySelectorAll('#themeSeg button').forEach((b) => b.classList.toggle('on', b.dataset.theme === t));
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute('content', t === 'light' ? '#F4F2EC' : '#0E0F13');
+}
+function updateBackBtn() {
+  const anyOpen = !$('#viewer').classList.contains('hidden') ||
+    !$('#sheet').classList.contains('hidden') || !$('#settings').classList.contains('hidden') ||
+    filters.type || filters.color || filters.tag || query;
+  $('#backBtn').classList.toggle('hidden', !anyOpen);
+}
+function goBack() {
+  if (!$('#viewer').classList.contains('hidden')) return closeViewer();
+  if (!$('#ctxMenu').classList.contains('hidden')) return closeCtx();
+  if (!$('#settings').classList.contains('hidden') || !$('#sheet').classList.contains('hidden')) return closeSheets();
+  // clear filters/search → back to Everything
+  filters = { space: '__all', type: null, color: null, tag: null }; query = ''; $('#search').value = '';
+  activeView = VIEWS[0].id; refresh();
 }
 
 function railFilter(e) {
@@ -642,6 +865,8 @@ function openSettings() {
   $('#aiKey').value = ai.getKey();
   $('#aiAuto').checked = localStorage.getItem('mind.aiAuto') === '1';
   $('#fbConfig').value = ''; // baked-in config; box is only an override
+  const cur = localStorage.getItem('mind.theme') || 'dark';
+  document.querySelectorAll('#themeSeg button').forEach((b) => b.classList.toggle('on', b.dataset.theme === cur));
   const signedIn = fb.isEnabled();
   $('#fbStatus').textContent = signedIn ? ('Synced as ' + (fb.getEmail() || 'account')) : '';
   updateSyncUI(signedIn ? { email: fb.getEmail() } : null);
@@ -671,4 +896,6 @@ if ('serviceWorker' in navigator) {
 
 wire();
 bindSettings();
+setTheme(localStorage.getItem('mind.theme') || 'dark');
+renderViews();
 load();
