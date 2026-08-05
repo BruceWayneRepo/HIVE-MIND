@@ -69,6 +69,7 @@ export async function signIn(onStatus = () => {}) {
   try {
     const provider = new authMod.GoogleAuthProvider();
     provider.addScope('https://www.googleapis.com/auth/drive.file');
+    provider.setCustomParameters({ prompt: 'consent', include_granted_scopes: 'true' });
     const result = await authMod.signInWithPopup(auth, provider);
     const cred = authMod.GoogleAuthProvider.credentialFromResult(result);
     driveToken = (cred && cred.accessToken) || '';
