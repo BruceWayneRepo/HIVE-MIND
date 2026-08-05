@@ -197,9 +197,53 @@ async function openDetail(id) {
     item.updated = now(); await db.putItem(item); ITEMS = await db.allItems();
     openDetail(id); refresh();
   }));
+  // inline PDF render
+  const pdfPane = panel.querySelector('#pdfPane');
+  if (pdfPane) renderPDF(pdfPane, pdfPane.dataset.blob);
+}
+
+let _pdfjs = null;
+async function loadPdfJs() {
+  if (_pdfjs) return _pdfjs;
+  const lib = await import('https://cdn.jsdelivr.net/npm/pdfjs-dist@4.7.76/build/pdf.min.mjs');
+  lib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.7.76/build/pdf.worker.min.mjs';
+  _pdfjs = lib;
+  return lib;
+}
+async function renderPDF(pane, blobId) {
+  try {
+    const url = await db.blobURL(blobId);
+    if (!url) { pane.innerHTML = '<div class="pdf-loading">File not found.</div>'; return; }
+    const pdfjs = await loadPdfJs();
+    const pdf = await pdfjs.getDocument(url).promise;
+    pane.innerHTML = '';
+    const max = Math.min(pdf.numPages, 20);
+    for (let n = 1; n <= max; n++) {
+      const page = await pdf.getPage(n);
+      const viewport = page.getViewport({ scale: 1.5 });
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      canvas.width = viewport.width; canvas.height = viewport.height;
+      pane.appendChild(canvas);
+      await page.render({ canvasContext: ctx, viewport }).promise;
+    }
+    if (pdf.numPages > max) {
+      const d = document.createElement('div');
+      d.className = 'pdf-loading';
+      d.textContent = `Showing first ${max} of ${pdf.numPages} pages — tap Full size for the rest.`;
+      pane.appendChild(d);
+    }
+  } catch (e) {
+    pane.innerHTML = `<div class="pdf-loading">Couldn't render inline (${e.message}). Tap Full size to open it.</div>`;
+  }
 }
 
 async function detailAction(act, item) {
+  if (act === 'fullsize') {
+    const url = await db.blobURL(item.blobId);
+    if (url) window.open(url, '_blank');
+    return;
+  }
   if (act === 'delete') {
     if (!confirm('Delete this from your mind?')) return;
     await db.deleteItem(item.id); fb.pushDelete(item.id).catch(() => {});

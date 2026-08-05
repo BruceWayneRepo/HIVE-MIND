@@ -1,5 +1,5 @@
 // App-shell caching so mind opens offline. Data lives in IndexedDB (not here).
-const CACHE = 'mind-shell-v1';
+const CACHE = 'mind-shell-v2';
 const SHELL = [
   './', './index.html', './style.css', './app.js', './db.js', './ui.js',
   './search.js', './color.js', './ocr.js', './ai.js', './firebase.js',

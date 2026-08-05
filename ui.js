@@ -97,17 +97,21 @@ export function renderRails({ items, typeList, colorList, tagList, spaceList, sp
 }
 
 export async function detailHTML(item) {
-  let media = '';
+  const canFull = (item.type === 'image' || item.type === 'pdf') && item.blobId;
+  const fullBtn = canFull
+    ? `<button class="preview-full" data-act="fullsize" title="Open full size">⤢ Full size</button>` : '';
+  let preview = '';
   if (item.type === 'image' && item.blobId) {
     const url = await blobURL(item.blobId);
-    if (url) media = `<img class="detail-media" src="${url}" alt="">`;
-  }
-  let audio = '';
-  if (item.type === 'voice' && item.blobId) {
+    if (url) preview = `<div class="preview-wrap">${fullBtn}<img class="detail-media" src="${url}" alt=""></div>`;
+  } else if (item.type === 'pdf' && item.blobId) {
+    preview = `<div class="preview-wrap">${fullBtn}<div id="pdfPane" class="detail-pdf" data-blob="${item.blobId}"><div class="pdf-loading">Rendering PDF…</div></div></div>`;
+  } else if (item.type === 'voice' && item.blobId) {
     const url = await blobURL(item.blobId);
-    if (url) audio = `<audio class="detail-media" controls src="${url}"></audio>`;
+    if (url) preview = `<audio class="detail-media" controls src="${url}"></audio>`;
   }
-  const readerClass = (item.type === 'link' || item.type === 'pdf') ? 'detail-reader' : '';
+  const media = preview, audio = '';
+  const readerClass = (item.type === 'link') ? 'detail-reader' : '';
   const body = item.text
     ? `<div class="detail-content ${readerClass}">${esc(item.text)}</div>`
     : (item.ocr ? `<div class="detail-content" style="color:var(--muted)">${esc(item.ocr)}</div>` : '');
