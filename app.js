@@ -474,8 +474,7 @@ function bindSettings() {
 }
 async function connectFirebase() {
   const raw = $('#fbConfig').value.trim();
-  if (!raw) { toast('Paste your Firebase config'); return; }
-  try { fb.saveConfig(JSON.parse(raw)); } catch { toast('Config is not valid JSON'); return; }
+  if (raw) { try { fb.saveConfig(JSON.parse(raw)); } catch { toast('Config is not valid JSON'); return; } }
   if (!_fbInited) { await fb.init(handleAuth); _fbInited = true; }
   fb.signIn((s) => { $('#fbStatus').textContent = s; });
 }

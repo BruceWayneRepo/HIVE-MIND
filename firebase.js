@@ -6,10 +6,18 @@
 let app = null, db = null, auth = null, authMod = null, fsMod = null;
 let uid = null, enabled = false, inited = false, onAuthCb = null;
 
+// Baked-in config so you never have to paste it. Same project as the Habit Wheel.
+const DEFAULT_CONFIG = {
+  apiKey: 'AIzaSyC8QeobLzF28etRiPZTpD6moCC6k1ITbXQ',
+  authDomain: 'project-limitless-cc89c.firebaseapp.com',
+  projectId: 'project-limitless-cc89c',
+  appId: '1:579632921168:web:df44e846c7b6f393aa6f55',
+};
+
 export function isEnabled() { return enabled; }
 export function getConfig() {
   const raw = localStorage.getItem('mind.fbConfig');
-  try { return raw ? JSON.parse(raw) : null; } catch { return null; }
+  try { return raw ? JSON.parse(raw) : DEFAULT_CONFIG; } catch { return DEFAULT_CONFIG; }
 }
 export function saveConfig(obj) { localStorage.setItem('mind.fbConfig', JSON.stringify(obj)); }
 
