@@ -21,14 +21,44 @@ function toast(msg) {
 }
 
 let _fbInited = false;
+function updateSyncUI(user) {
+  const connect = document.querySelector('#fbConnect');
+  const signed = document.querySelector('#fbSignedIn');
+  const email = document.querySelector('#fbEmail');
+  if (user) {
+    if (connect) connect.classList.add('hidden');
+    if (signed) signed.classList.remove('hidden');
+    if (email) email.textContent = user.email || 'Signed in';
+  } else {
+    if (connect) connect.classList.remove('hidden');
+    if (signed) signed.classList.add('hidden');
+  }
+}
 function handleAuth(user) {
   const st = document.querySelector('#fbStatus');
+  updateSyncUI(user);
   if (user) {
     if (st) st.textContent = 'Synced as ' + (user.email || 'account');
-    mergeRemote().then(() => { for (const i of ITEMS) fb.push(i).catch(() => {}); });
-  } else if (st) {
-    st.textContent = 'Signed out — saving locally.';
+    mergeRemote().then(() => {
+      for (const i of ITEMS) fb.push(i).catch(() => {});
+      // live updates from other devices
+      fb.subscribe(async (remote) => {
+        await applyRemoteItems(remote);
+      });
+    });
+  } else {
+    if (st) st.textContent = 'Signed out — saving locally.';
+    fb.unsubscribe && fb.unsubscribe();
   }
+}
+async function applyRemoteItems(remote) {
+  let changed = 0;
+  const map = new Map(ITEMS.map((i) => [i.id, i]));
+  for (const r of remote) {
+    const local = map.get(r.id);
+    if (!local || (r.updated || 0) > (local.updated || 0)) { await db.putItem(r); changed++; }
+  }
+  if (changed) { ITEMS = await db.allItems(); refresh(); }
 }
 async function load() {
   ITEMS = await db.allItems();
@@ -136,7 +166,26 @@ async function quickSave(text) {
   }
   const saved = await saveItem(item);
   toast('Saved to your mind');
+  if (type === 'link') fetchLinkPreview(saved);
   maybeEnrich(saved);
+}
+
+// Rich link previews via microlink's free API (CORS-friendly). Fills title,
+// description and a preview image so link cards stop showing a bare hostname.
+async function fetchLinkPreview(item) {
+  try {
+    const res = await fetch('https://api.microlink.io/?url=' + encodeURIComponent(item.url));
+    if (!res.ok) return;
+    const j = await res.json();
+    const d = (j && j.data) || {};
+    if (d.title) item.title = d.title;
+    if (d.description) item.summary = d.description;
+    if (d.image && d.image.url) item.previewImage = d.image.url;
+    if (d.logo && d.logo.url) item.favicon = d.logo.url;
+    item.updated = now();
+    await db.putItem(item); ITEMS = await db.allItems(); refresh();
+    fb.push(item).catch(() => {});
+  } catch (e) { /* offline or blocked — keep the hostname fallback */ }
 }
 
 async function saveImageFile(file) {
@@ -155,8 +204,31 @@ async function saveImageFile(file) {
     if (text) { saved.ocr = text; await db.putItem(saved); ITEMS = await db.allItems(); refresh(); }
     maybeEnrich(saved);
   } else {
+    // PDF: pull text so search reaches inside the document
+    extractPdfText(saved);
     maybeEnrich(saved);
   }
+}
+
+async function extractPdfText(item) {
+  try {
+    const url = await db.blobURL(item.blobId);
+    const pdfjs = await loadPdfJs();
+    const pdf = await pdfjs.getDocument(url).promise;
+    const max = Math.min(pdf.numPages, 30);
+    let text = '';
+    for (let n = 1; n <= max; n++) {
+      const page = await pdf.getPage(n);
+      const content = await page.getTextContent();
+      text += content.items.map((i) => i.str).join(' ') + '\n';
+    }
+    if (text.trim()) {
+      item.ocr = text.trim();
+      item.updated = now();
+      await db.putItem(item); ITEMS = await db.allItems(); refresh();
+      fb.push(item).catch(() => {});
+    }
+  } catch (e) { /* scanned PDF or offline — search still works on the title */ }
 }
 
 async function maybeEnrich(item) {
@@ -200,6 +272,26 @@ async function openDetail(id) {
   // inline PDF render
   const pdfPane = panel.querySelector('#pdfPane');
   if (pdfPane) renderPDF(pdfPane, pdfPane.dataset.blob);
+  // image zoom
+  const zImg = panel.querySelector('#zoomImg');
+  if (zImg) {
+    let scale = 1;
+    const apply = () => { zImg.style.transform = `scale(${scale})`; };
+    panel.querySelectorAll('[data-zoom]').forEach((b) => b.addEventListener('click', () => {
+      const z = b.dataset.zoom;
+      if (z === 'in') scale = Math.min(5, scale + 0.25);
+      else if (z === 'out') scale = Math.max(0.5, scale - 0.25);
+      else scale = 1;
+      apply();
+    }));
+    // double-tap to toggle zoom
+    let lastTap = 0;
+    zImg.addEventListener('click', () => {
+      const t = Date.now();
+      if (t - lastTap < 300) { scale = scale > 1 ? 1 : 2; apply(); }
+      lastTap = t;
+    });
+  }
 }
 
 let _pdfjs = null;
@@ -304,42 +396,59 @@ async function askMind() {
 }
 
 /* ---------------- Voice ---------------- */
-let mediaRec = null, chunks = [], recognizer = null, liveText = '';
+let mediaRec = null, chunks = [], recognizer = null, liveText = '', recMime = '';
+function pickAudioMime() {
+  // iOS Safari can't play webm — prefer mp4/aac; fall back sensibly.
+  const prefs = ['audio/mp4', 'audio/mp4;codecs=mp4a.40.2', 'audio/aac', 'audio/webm;codecs=opus', 'audio/webm'];
+  for (const m of prefs) { if (window.MediaRecorder && MediaRecorder.isTypeSupported(m)) return m; }
+  return '';
+}
 async function toggleVoice() {
   if (mediaRec && mediaRec.state === 'recording') {
     mediaRec.stop();
-    if (recognizer) recognizer.stop();
+    if (recognizer) { try { recognizer.stop(); } catch {} }
     return;
   }
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     chunks = []; liveText = '';
-    mediaRec = new MediaRecorder(stream);
-    mediaRec.ondataavailable = (e) => chunks.push(e.data);
+    recMime = pickAudioMime();
+    mediaRec = recMime ? new MediaRecorder(stream, { mimeType: recMime }) : new MediaRecorder(stream);
+    mediaRec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
     mediaRec.onstop = async () => {
       stream.getTracks().forEach((t) => t.stop());
-      const blob = new Blob(chunks, { type: 'audio/webm' });
-      const item = { type: 'voice', title: 'Voice note', text: liveText.trim() };
+      const type = (mediaRec.mimeType || recMime || 'audio/mp4').split(';')[0];
+      const blob = new Blob(chunks, { type });
+      const item = { type: 'voice', title: 'Voice note', text: liveText.trim(), audioType: type };
       const saved = await saveItem(item, blob);
-      toast('Voice note saved'); maybeEnrich(saved);
+      toast(liveText.trim() ? 'Voice note + transcript saved' : 'Voice note saved');
+      maybeEnrich(saved);
     };
-    // live transcription via Web Speech API (best-effort, on-device)
+    // live transcription via Web Speech API (best-effort; strong on Chrome, limited on iOS Safari)
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (SR) {
       recognizer = new SR();
-      recognizer.continuous = true; recognizer.interimResults = true;
+      recognizer.continuous = true;
+      recognizer.interimResults = true;
+      recognizer.maxAlternatives = 1;
+      recognizer.lang = navigator.language || 'en-US';
+      let finalText = '';
       recognizer.onresult = (e) => {
-        liveText = '';
-        for (let i = 0; i < e.results.length; i++) liveText += e.results[i][0].transcript;
+        let interim = '';
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          const t = e.results[i][0].transcript;
+          if (e.results[i].isFinal) finalText += t + ' '; else interim += t;
+        }
+        liveText = (finalText + interim).trim();
       };
-      recognizer.start();
+      recognizer.onend = () => { if (mediaRec && mediaRec.state === 'recording') { try { recognizer.start(); } catch {} } };
+      try { recognizer.start(); } catch {}
     }
     mediaRec.start();
     toast('Recording… tap ◉ again to stop');
     $('#newVoice').style.color = 'var(--pdf)';
-    const restore = () => { $('#newVoice').style.color = ''; };
-    mediaRec.addEventListener('stop', restore, { once: true });
-  } catch (e) { toast('Mic unavailable'); }
+    mediaRec.addEventListener('stop', () => { $('#newVoice').style.color = ''; }, { once: true });
+  } catch (e) { toast('Mic unavailable — allow microphone access'); }
 }
 
 /* ---------------- Export / import ---------------- */
@@ -416,6 +525,14 @@ function wire() {
 
   // settings
   $('#settingsBtn').addEventListener('click', openSettings);
+  // mobile filter drawer
+  const rail = document.querySelector('.rail');
+  const scrim = $('#railScrim');
+  const openRail = () => { rail.classList.add('open'); scrim.classList.add('show'); };
+  const closeRail = () => { rail.classList.remove('open'); scrim.classList.remove('show'); };
+  $('#menuBtn').addEventListener('click', openRail);
+  scrim.addEventListener('click', closeRail);
+  rail.addEventListener('click', (e) => { if (e.target.closest('[data-space],[data-type],[data-tag],[data-color]')) closeRail(); });
   $('#brandBtn').addEventListener('click', () => toast('mind — your private place to save everything'));
   document.querySelectorAll('[data-close]').forEach((el) => el.addEventListener('click', closeSheets));
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSheets(); });
@@ -463,14 +580,21 @@ function railFilter(e) {
 function openSettings() {
   $('#aiKey').value = ai.getKey();
   $('#aiAuto').checked = localStorage.getItem('mind.aiAuto') === '1';
-  const cfg = fb.getConfig();
-  $('#fbConfig').value = cfg ? JSON.stringify(cfg, null, 2) : '';
-  $('#fbStatus').textContent = fb.isEnabled() ? 'Connected.' : '';
+  $('#fbConfig').value = ''; // baked-in config; box is only an override
+  const signedIn = fb.isEnabled();
+  $('#fbStatus').textContent = signedIn ? ('Synced as ' + (fb.getEmail() || 'account')) : '';
+  updateSyncUI(signedIn ? { email: fb.getEmail() } : null);
   $('#settings').classList.remove('hidden');
 }
 function bindSettings() {
   $('#aiKey').addEventListener('change', (e) => { ai.setKey(e.target.value.trim()); toast('AI key saved'); });
   $('#aiAuto').addEventListener('change', (e) => localStorage.setItem('mind.aiAuto', e.target.checked ? '1' : '0'));
+  $('#fbSignOut').addEventListener('click', async () => {
+    await fb.signOutUser();
+    updateSyncUI(null);
+    $('#fbStatus').textContent = 'Signed out — saving locally.';
+    toast('Signed out');
+  });
 }
 async function connectFirebase() {
   const raw = $('#fbConfig').value.trim();

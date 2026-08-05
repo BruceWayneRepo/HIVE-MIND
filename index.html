@@ -16,6 +16,7 @@
 <div id="app">
   <!-- Top bar -->
   <header class="topbar">
+    <button class="menu-btn" id="menuBtn" title="Filters" aria-label="Filters">☰</button>
     <button class="brand" id="brandBtn" title="About">
       <span class="brand-mark"></span>
       <span class="brand-word">mind</span>
@@ -33,6 +34,7 @@
   </header>
 
   <div class="body">
+    <div class="rail-scrim" id="railScrim"></div>
     <!-- Left rail -->
     <aside class="rail">
       <nav class="spaces">
@@ -118,8 +120,12 @@
       <h3>Sync <span class="muted">— optional, your own Firebase</span></h3>
       <label>Firebase config (JSON)</label>
       <textarea id="fbConfig" rows="6" placeholder='{ "apiKey": "...", "authDomain": "...", "projectId": "...", "appId": "..." }'></textarea>
-      <p class="hint">Already configured — just tap Connect & sync and sign in with Google to sync across devices. Use the same Google account on each device. (Config box is optional, only to override the built-in project.)</p>
+      <p class="hint">Already configured — just tap Connect & sync and sign in with Google to sync across devices. Use the same Google account on each device.</p>
       <button id="fbConnect" class="ghost">Connect & sync (Google)</button>
+      <div id="fbSignedIn" class="hidden signed-in">
+        <div class="signed-row"><span class="signed-dot"></span><span id="fbEmail" class="signed-email">—</span></div>
+        <button id="fbSignOut" class="ghost">Sign out</button>
+      </div>
       <span id="fbStatus" class="hint"></span>
     </section>
 

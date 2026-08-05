@@ -26,6 +26,8 @@ export async function cardHTML(item) {
   if (item.type === 'image' && item.blobId) {
     const url = await blobURL(item.blobId);
     if (url) media = `<img class="card-media" loading="lazy" src="${url}" alt="">`;
+  } else if (item.type === 'link' && item.previewImage) {
+    media = `<img class="card-media" loading="lazy" src="${esc(item.previewImage)}" alt="" onerror="this.remove()">`;
   }
 
   let bodyMain = '';
@@ -35,7 +37,8 @@ export async function cardHTML(item) {
     bodyMain = `<div class="card-serif">${esc((item.title || item.text || '').slice(0, 120))}</div>
       ${item.text && item.title ? `<div class="card-snip">${esc(item.text.slice(0, 180))}</div>` : ''}`;
   } else if (item.type === 'link') {
-    bodyMain = `<div class="card-title">${esc(item.title || item.url || 'Link')}</div>
+    const fav = item.favicon ? `<img class="card-fav-img" src="${esc(item.favicon)}" onerror="this.remove()">` : '';
+    bodyMain = `<div class="card-title">${fav}${esc(item.title || item.url || 'Link')}</div>
       ${item.summary ? `<div class="card-snip">${esc(item.summary)}</div>` : ''}`;
   } else if (item.type === 'voice') {
     bodyMain = `<div class="card-title">◉ Voice note</div>
@@ -103,7 +106,10 @@ export async function detailHTML(item) {
   let preview = '';
   if (item.type === 'image' && item.blobId) {
     const url = await blobURL(item.blobId);
-    if (url) preview = `<div class="preview-wrap">${fullBtn}<img class="detail-media" src="${url}" alt=""></div>`;
+    if (url) preview = `<div class="preview-wrap">${fullBtn}
+      <div class="zoom-controls"><button data-zoom="out">−</button><button data-zoom="reset">reset</button><button data-zoom="in">+</button></div>
+      <div class="zoom-viewport" id="zoomViewport"><img class="detail-media zoom-img" id="zoomImg" src="${url}" alt=""></div>
+    </div>`;
   } else if (item.type === 'pdf' && item.blobId) {
     preview = `<div class="preview-wrap">${fullBtn}<div id="pdfPane" class="detail-pdf" data-blob="${item.blobId}"><div class="pdf-loading">Rendering PDF…</div></div></div>`;
   } else if (item.type === 'voice' && item.blobId) {

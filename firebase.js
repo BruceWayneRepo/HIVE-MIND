@@ -4,7 +4,9 @@
 // the Habit Wheel's data in the same project.
 
 let app = null, db = null, auth = null, authMod = null, fsMod = null;
-let uid = null, enabled = false, inited = false, onAuthCb = null;
+let uid = null, enabled = false, inited = false, onAuthCb = null, userEmail = '';
+
+export function getEmail() { return userEmail; }
 
 // Baked-in config so you never have to paste it. Same project as the Habit Wheel.
 const DEFAULT_CONFIG = {
@@ -45,6 +47,7 @@ export async function init(onAuth = () => {}) {
     authMod.onAuthStateChanged(auth, (user) => {
       enabled = !!user;
       uid = user ? user.uid : null;
+      userEmail = user ? (user.email || '') : '';
       if (onAuthCb) onAuthCb(user);
     });
   } catch (e) {
@@ -98,3 +101,14 @@ export async function pull() {
   const snap = await fsMod.getDocs(fsMod.collection(db, 'users', uid, 'items'));
   return snap.docs.map((d) => d.data());
 }
+
+// Realtime: fires cb(items[]) whenever the cloud copy changes (other device edits).
+let _unsub = null;
+export function subscribe(cb) {
+  if (!enabled || !uid) return;
+  if (_unsub) { _unsub(); _unsub = null; }
+  _unsub = fsMod.onSnapshot(fsMod.collection(db, 'users', uid, 'items'), (snap) => {
+    cb(snap.docs.map((d) => d.data()));
+  }, () => {});
+}
+export function unsubscribe() { if (_unsub) { _unsub(); _unsub = null; } }
