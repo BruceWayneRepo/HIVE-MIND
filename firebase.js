@@ -4,9 +4,10 @@
 // the Habit Wheel's data in the same project.
 
 let app = null, db = null, auth = null, authMod = null, fsMod = null;
-let uid = null, enabled = false, inited = false, onAuthCb = null, userEmail = '';
+let uid = null, enabled = false, inited = false, onAuthCb = null, userEmail = '', driveToken = '';
 
 export function getEmail() { return userEmail; }
+export function getDriveToken() { return driveToken; }
 
 // Baked-in config so you never have to paste it. Same project as the Habit Wheel.
 const DEFAULT_CONFIG = {
@@ -43,7 +44,12 @@ export async function init(onAuth = () => {}) {
     inited = true;
     await authMod.setPersistence(auth, authMod.browserLocalPersistence).catch(() => {});
     // If a redirect sign-in just completed (mobile fallback), pick it up.
-    authMod.getRedirectResult(auth).catch(() => {});
+    authMod.getRedirectResult(auth).then((result) => {
+      if (result) {
+        const cred = authMod.GoogleAuthProvider.credentialFromResult(result);
+        if (cred && cred.accessToken) driveToken = cred.accessToken;
+      }
+    }).catch(() => {});
     authMod.onAuthStateChanged(auth, (user) => {
       enabled = !!user;
       uid = user ? user.uid : null;
@@ -62,13 +68,17 @@ export async function signIn(onStatus = () => {}) {
   onStatus('Opening Google sign-in…');
   try {
     const provider = new authMod.GoogleAuthProvider();
-    await authMod.signInWithPopup(auth, provider);
+    provider.addScope('https://www.googleapis.com/auth/drive.file');
+    const result = await authMod.signInWithPopup(auth, provider);
+    const cred = authMod.GoogleAuthProvider.credentialFromResult(result);
+    driveToken = (cred && cred.accessToken) || '';
     onStatus('Signed in. Syncing…');
   } catch (e) {
     const code = (e && e.code) || '';
     if (code.includes('popup-blocked') || code.includes('popup-closed') || code.includes('cancelled')) {
       try {
         const provider = new authMod.GoogleAuthProvider();
+        provider.addScope('https://www.googleapis.com/auth/drive.file');
         await authMod.signInWithRedirect(auth, provider);
       } catch (e2) { onStatus('Sign-in failed: ' + e2.message); }
     } else if (code.includes('unauthorized-domain')) {

@@ -1,10 +1,10 @@
 // Network-first service worker: always fetch the latest files when online, so
 // updates you push to GitHub take effect immediately. Falls back to cache only
 // when offline. Bump CACHE to force old caches out.
-const CACHE = 'mind-shell-v3';
+const CACHE = 'mind-shell-v4';
 const SHELL = [
   './', './index.html', './style.css', './app.js', './db.js', './ui.js',
-  './search.js', './color.js', './ocr.js', './ai.js', './firebase.js',
+  './search.js', './color.js', './ocr.js', './ai.js', './firebase.js', './drive.js',
   './manifest.webmanifest', './icon-192.png', './icon-512.png',
 ];
 self.addEventListener('install', (e) => {

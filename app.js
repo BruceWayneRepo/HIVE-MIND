@@ -3,6 +3,7 @@ import { colorsFromURL } from './color.js';
 import { ocrImage } from './ocr.js';
 import * as ai from './ai.js';
 import * as fb from './firebase.js';
+import * as drive from './drive.js';
 import { runSearch, serendipity, buildIndex } from './search.js';
 import { renderGrid, renderRails, detailHTML, esc } from './ui.js';
 
@@ -39,8 +40,11 @@ function handleAuth(user) {
   updateSyncUI(user);
   if (user) {
     if (st) st.textContent = 'Synced as ' + (user.email || 'account');
+    const t = fb.getDriveToken();
+    if (t) drive.setToken(t);
     mergeRemote().then(() => {
       for (const i of ITEMS) fb.push(i).catch(() => {});
+      uploadPendingFiles();
       // live updates from other devices
       fb.subscribe(async (remote) => {
         await applyRemoteItems(remote);
@@ -50,6 +54,42 @@ function handleAuth(user) {
     if (st) st.textContent = 'Signed out — saving locally.';
     fb.unsubscribe && fb.unsubscribe();
   }
+}
+// Upload any files that have a local blob but no Drive id yet.
+async function uploadPendingFiles() {
+  if (!drive.hasToken()) return;
+  for (const item of ITEMS) {
+    if (item.blobId && !item.driveId) {
+      try {
+        const blob = await db.getBlob(item.blobId);
+        if (!blob) continue;
+        const ext = item.type === 'image' ? 'img' : item.type === 'pdf' ? 'pdf' : 'audio';
+        const id = await drive.uploadBlob(blob, `${item.id}.${ext}`);
+        item.driveId = id; item.updated = now();
+        await db.putItem(item); fb.push(item).catch(() => {});
+      } catch (e) { /* token issue or offline — try later */ break; }
+    }
+  }
+}
+// Ensure a file item's blob exists locally; if not, pull it from Drive.
+async function ensureBlob(item) {
+  if (!item.blobId) {
+    const existing = await db.getBlob(item.id);
+    if (existing) { item.blobId = item.id; return true; }
+  } else {
+    const existing = await db.getBlob(item.blobId);
+    if (existing) return true;
+  }
+  if (item.driveId && drive.hasToken()) {
+    try {
+      const blob = await drive.downloadBlob(item.driveId);
+      await db.putBlob(item.id, blob);
+      item.blobId = item.id;
+      await db.putItem(item);
+      return true;
+    } catch (e) { return false; }
+  }
+  return false;
 }
 async function applyRemoteItems(remote) {
   let changed = 0;
@@ -140,6 +180,17 @@ async function saveItem(item, blob) {
   ITEMS = await db.allItems();
   refresh();
   fb.push(item).catch(() => {});
+  // upload the file to the user's Drive so other devices can pull it
+  if (blob && drive.hasToken()) {
+    (async () => {
+      try {
+        const ext = item.type === 'image' ? 'img' : item.type === 'pdf' ? 'pdf' : 'audio';
+        const driveId = await drive.uploadBlob(blob, `${item.id}.${ext}`);
+        item.driveId = driveId; item.updated = now();
+        await db.putItem(item); fb.push(item).catch(() => {});
+      } catch (e) { /* offline or token expired — uploadPendingFiles will retry next sign-in */ }
+    })();
+  }
   return item;
 }
 
@@ -249,6 +300,16 @@ async function openDetail(id) {
   if (!item) return;
   if (!item.read) { item.read = true; db.putItem(item); }
   const panel = $('#sheetPanel');
+  // if this is a file synced from another device, pull it from Drive first
+  if ((item.type === 'image' || item.type === 'pdf' || item.type === 'voice') && item.driveId) {
+    const hasLocal = item.blobId && await db.getBlob(item.blobId);
+    if (!hasLocal) {
+      $('#sheet').classList.remove('hidden');
+      panel.innerHTML = '<div class="pdf-loading">Fetching file from your Drive…</div>';
+      const ok = await ensureBlob(item);
+      if (!ok) { panel.innerHTML = '<div class="pdf-loading">Couldn\'t fetch the file. Open Settings → reconnect Google, then retry.</div>'; return; }
+    }
+  }
   panel.innerHTML = await detailHTML(item);
   $('#sheet').classList.remove('hidden');
 
