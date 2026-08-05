@@ -1,9 +1,10 @@
-// Optional cross-device sync using the user's OWN Firebase project.
-// Paste config in Settings. Uses anonymous auth + Firestore. Metadata only by
-// default (blobs stay local) to keep it within free-tier limits; a full-blob
-// sync would need Firebase Storage which the user can wire later.
+// Cross-device sync using your OWN Firebase project, with GOOGLE sign-in so the
+// same account links every device (iPad <-> phone). Metadata syncs; image/audio
+// blobs stay local for now. Data lives under users/{uid}/items — separate from
+// the Habit Wheel's data in the same project.
 
-let app = null, db = null, auth = null, uid = null, enabled = false;
+let app = null, db = null, auth = null, authMod = null, fsMod = null;
+let uid = null, enabled = false, inited = false, onAuthCb = null;
 
 export function isEnabled() { return enabled; }
 export function getConfig() {
@@ -12,50 +13,80 @@ export function getConfig() {
 }
 export function saveConfig(obj) { localStorage.setItem('mind.fbConfig', JSON.stringify(obj)); }
 
-async function load(url) {
-  return import(/* @vite-ignore */ url);
-}
+async function load(url) { return import(/* @vite-ignore */ url); }
 
-export async function connect(onStatus = () => {}) {
+// Initialise once. Attaches the auth listener and resumes any saved session
+// (so if you signed in before, it reconnects silently on load). Does NOT force
+// a sign-in prompt — that only happens from signIn() on a button tap.
+export async function init(onAuth = () => {}) {
+  onAuthCb = onAuth;
+  if (inited) return;
   const cfg = getConfig();
-  if (!cfg) { onStatus('No config — running locally.'); return false; }
+  if (!cfg) return;
   try {
-    const appMod = await load('https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js');
-    const authMod = await load('https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js');
-    const fsMod = await load('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+    const appMod = await load('https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js');
+    authMod = await load('https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js');
+    fsMod = await load('https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js');
     app = appMod.initializeApp(cfg);
     auth = authMod.getAuth(app);
     db = fsMod.getFirestore(app);
-    const cred = await authMod.signInAnonymously(auth);
-    uid = cred.user.uid;
-    enabled = true;
-    window.__fs = fsMod; // stash module for push/pull
-    onStatus('Connected. Syncing metadata.');
-    return true;
+    inited = true;
+    await authMod.setPersistence(auth, authMod.browserLocalPersistence).catch(() => {});
+    // If a redirect sign-in just completed (mobile fallback), pick it up.
+    authMod.getRedirectResult(auth).catch(() => {});
+    authMod.onAuthStateChanged(auth, (user) => {
+      enabled = !!user;
+      uid = user ? user.uid : null;
+      if (onAuthCb) onAuthCb(user);
+    });
   } catch (e) {
-    onStatus('Connection failed: ' + e.message);
-    enabled = false;
-    return false;
+    console.warn('Firebase init failed:', e.message);
   }
 }
 
+// Interactive Google sign-in. Popup first; on mobile where popups are blocked,
+// fall back to full-page redirect.
+export async function signIn(onStatus = () => {}) {
+  if (!inited) { onStatus('Not ready — check your config.'); return; }
+  onStatus('Opening Google sign-in…');
+  try {
+    const provider = new authMod.GoogleAuthProvider();
+    await authMod.signInWithPopup(auth, provider);
+    onStatus('Signed in. Syncing…');
+  } catch (e) {
+    const code = (e && e.code) || '';
+    if (code.includes('popup-blocked') || code.includes('popup-closed') || code.includes('cancelled')) {
+      try {
+        const provider = new authMod.GoogleAuthProvider();
+        await authMod.signInWithRedirect(auth, provider);
+      } catch (e2) { onStatus('Sign-in failed: ' + e2.message); }
+    } else if (code.includes('unauthorized-domain')) {
+      onStatus('Add this site to Firebase → Authentication → Settings → Authorized domains.');
+    } else {
+      onStatus('Sign-in failed: ' + (e.message || code));
+    }
+  }
+}
+
+export async function signOutUser() {
+  if (auth) { try { await authMod.signOut(auth); } catch {} }
+  enabled = false; uid = null;
+}
+
 export async function push(item) {
-  if (!enabled) return;
-  const fs = window.__fs;
-  const { blob, ...meta } = item; // never push raw blob field
-  const ref = fs.doc(db, 'users', uid, 'items', item.id);
-  await fs.setDoc(ref, meta, { merge: true });
+  if (!enabled || !uid) return;
+  const { blob, ...meta } = item; // never push the raw blob field
+  const ref = fsMod.doc(db, 'users', uid, 'items', item.id);
+  await fsMod.setDoc(ref, meta, { merge: true });
 }
 
 export async function pushDelete(id) {
-  if (!enabled) return;
-  const fs = window.__fs;
-  await fs.deleteDoc(fs.doc(db, 'users', uid, 'items', id));
+  if (!enabled || !uid) return;
+  await fsMod.deleteDoc(fsMod.doc(db, 'users', uid, 'items', id));
 }
 
 export async function pull() {
-  if (!enabled) return [];
-  const fs = window.__fs;
-  const snap = await fs.getDocs(fs.collection(db, 'users', uid, 'items'));
+  if (!enabled || !uid) return [];
+  const snap = await fsMod.getDocs(fsMod.collection(db, 'users', uid, 'items'));
   return snap.docs.map((d) => d.data());
 }

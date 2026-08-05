@@ -20,9 +20,19 @@ function toast(msg) {
   clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('show'), 2200);
 }
 
+let _fbInited = false;
+function handleAuth(user) {
+  const st = document.querySelector('#fbStatus');
+  if (user) {
+    if (st) st.textContent = 'Synced as ' + (user.email || 'account');
+    mergeRemote().then(() => { for (const i of ITEMS) fb.push(i).catch(() => {}); });
+  } else if (st) {
+    st.textContent = 'Signed out — saving locally.';
+  }
+}
 async function load() {
   ITEMS = await db.allItems();
-  if (fb.getConfig()) fb.connect(() => {}).then(async (ok) => { if (ok) await mergeRemote(); });
+  if (fb.getConfig()) { fb.init(handleAuth); _fbInited = true; }
   refresh();
 }
 
@@ -422,8 +432,8 @@ async function connectFirebase() {
   const raw = $('#fbConfig').value.trim();
   if (!raw) { toast('Paste your Firebase config'); return; }
   try { fb.saveConfig(JSON.parse(raw)); } catch { toast('Config is not valid JSON'); return; }
-  const ok = await fb.connect((s) => { $('#fbStatus').textContent = s; });
-  if (ok) { await mergeRemote(); for (const i of ITEMS) fb.push(i).catch(() => {}); }
+  if (!_fbInited) { await fb.init(handleAuth); _fbInited = true; }
+  fb.signIn((s) => { $('#fbStatus').textContent = s; });
 }
 
 /* ---------------- PWA ---------------- */
