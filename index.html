@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#0E0F13" />
+<title>mind — save everything</title>
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="apple-touch-icon" href="icon-192.png" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;1,9..144,400&family=Inter:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div id="app">
+  <!-- Top bar -->
+  <header class="topbar">
+    <button class="brand" id="brandBtn" title="About">
+      <span class="brand-mark"></span>
+      <span class="brand-word">mind</span>
+    </button>
+
+    <div class="searchwrap">
+      <input id="search" class="search" type="text" autocomplete="off"
+             placeholder="Search your mind — a word, a colour, a date, anything you remember" />
+      <button id="askBtn" class="ask" title="Ask your mind (AI)">ask</button>
+    </div>
+
+    <div class="topbar-actions">
+      <button id="settingsBtn" class="icon-btn" title="Settings">⚙</button>
+    </div>
+  </header>
+
+  <div class="body">
+    <!-- Left rail -->
+    <aside class="rail">
+      <nav class="spaces">
+        <button class="space active" data-space="__all">Everything</button>
+        <button class="space" data-space="__unread">Unread</button>
+        <button class="space" data-space="__serendipity">Serendipity</button>
+      </nav>
+
+      <div class="rail-section">
+        <div class="rail-head">
+          <span>Spaces</span>
+          <button id="addSpace" class="mini" title="New space">+</button>
+        </div>
+        <nav id="spaceList" class="spaces"></nav>
+      </div>
+
+      <div class="rail-section">
+        <div class="rail-head"><span>Types</span></div>
+        <nav id="typeList" class="chips"></nav>
+      </div>
+
+      <div class="rail-section">
+        <div class="rail-head"><span>Colours</span></div>
+        <div id="colorList" class="swatches"></div>
+      </div>
+
+      <div class="rail-section">
+        <div class="rail-head"><span>Tags</span></div>
+        <nav id="tagList" class="chips"></nav>
+      </div>
+
+      <div class="rail-foot">
+        <button id="exportBtn" class="ghost">Export</button>
+        <button id="syncBtn" class="ghost">Sync</button>
+      </div>
+    </aside>
+
+    <!-- Main grid -->
+    <main class="main">
+      <div id="serendipity" class="serendipity hidden"></div>
+      <div id="grid" class="grid"></div>
+      <div id="empty" class="empty hidden">
+        <p class="empty-serif">Nothing here yet.</p>
+        <p class="empty-sub">Paste a link, drop an image, or hit the pencil. Your mind fills itself in.</p>
+      </div>
+    </main>
+  </div>
+
+  <!-- Capture bar -->
+  <div class="capture">
+    <button id="newNote" class="cap-btn" title="Write a note">✎</button>
+    <button id="newImage" class="cap-btn" title="Add image / PDF">▣</button>
+    <button id="newVoice" class="cap-btn" title="Voice note">◉</button>
+    <input id="pastebar" class="pastebar" type="text"
+           placeholder="Paste a link or drop anything here…" />
+    <button id="saveQuick" class="cap-save">Save</button>
+  </div>
+</div>
+
+<input id="fileInput" type="file" accept="image/*,application/pdf" multiple hidden />
+
+<!-- Detail / editor sheet -->
+<div id="sheet" class="sheet hidden">
+  <div class="sheet-scrim" data-close></div>
+  <div class="sheet-panel" id="sheetPanel"></div>
+</div>
+
+<!-- Settings sheet -->
+<div id="settings" class="sheet hidden">
+  <div class="sheet-scrim" data-close></div>
+  <div class="sheet-panel narrow">
+    <h2 class="serif">Settings</h2>
+
+    <section class="set-block">
+      <h3>AI <span class="muted">— paste your own key, stays in this browser</span></h3>
+      <label>Anthropic API key</label>
+      <input id="aiKey" type="password" placeholder="sk-ant-..." />
+      <p class="hint">Powers auto-tagging, summaries, natural-language search and voice transcription. Stored only in your browser (localStorage). Leave blank to run fully offline.</p>
+      <label class="check"><input type="checkbox" id="aiAuto" /> Auto-tag & summarise new saves</label>
+    </section>
+
+    <section class="set-block">
+      <h3>Sync <span class="muted">— optional, your own Firebase</span></h3>
+      <label>Firebase config (JSON)</label>
+      <textarea id="fbConfig" rows="6" placeholder='{ "apiKey": "...", "authDomain": "...", "projectId": "...", "appId": "..." }'></textarea>
+      <p class="hint">Paste your web-app config to sync across devices. Uses anonymous auth + Firestore. Leave blank to keep everything local (IndexedDB).</p>
+      <button id="fbConnect" class="ghost">Connect & sync</button>
+      <span id="fbStatus" class="hint"></span>
+    </section>
+
+    <section class="set-block">
+      <h3>Data</h3>
+      <div class="row">
+        <button id="exportJson" class="ghost">Export JSON</button>
+        <button id="exportCsv" class="ghost">Export CSV</button>
+        <button id="importBtn" class="ghost">Import JSON</button>
+        <input id="importInput" type="file" accept="application/json" hidden />
+      </div>
+    </section>
+
+    <button class="ghost close" data-close>Done</button>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
