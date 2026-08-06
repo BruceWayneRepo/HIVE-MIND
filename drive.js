@@ -12,10 +12,10 @@ let tokenExp = +(sessionStorage.getItem('mind.driveExp') || 0);
 let tokenClient = null, gisReady = null, folderId = null;
 
 export function getClientId() { return localStorage.getItem('mind.gisClientId') || ''; }
-export function setClientId(id) { id ? localStorage.setItem('mind.gisClientId', id) : localStorage.removeItem('mind.gisClientId'); tokenClient = null; }
+export function setClientId(id) { id ? localStorage.setItem('mind.gisClientId', id) : localStorage.removeItem('mind.gisClientId'); tokenClient = null; preload(); }
 export function hasClientId() { return !!getClientId(); }
+export function isReady() { return !!tokenClient; }
 
-// legacy seed (Firebase-provided token) — used only as a fallback if no client id
 export function setToken(t) {
   if (!t) return;
   accessToken = t; tokenExp = Date.now() + 55 * 60000;
@@ -23,6 +23,12 @@ export function setToken(t) {
   sessionStorage.setItem('mind.driveExp', String(tokenExp));
 }
 export function hasToken() { return !!accessToken && Date.now() < tokenExp - 60000; }
+function stash(resp) {
+  accessToken = resp.access_token;
+  tokenExp = Date.now() + ((resp.expires_in ? resp.expires_in : 3600) * 1000);
+  sessionStorage.setItem('mind.driveTok', accessToken);
+  sessionStorage.setItem('mind.driveExp', String(tokenExp));
+}
 
 function loadGis() {
   if (gisReady) return gisReady;
@@ -36,37 +42,47 @@ function loadGis() {
   });
   return gisReady;
 }
-
-async function initClient() {
+function initSync() {
+  if (tokenClient) return true;
+  if (!(window.google && window.google.accounts && window.google.accounts.oauth2)) return false;
   const clientId = getClientId();
-  if (!clientId) throw new Error('Add your Google Client ID in Settings → Sync ✎.');
-  await loadGis();
-  if (!tokenClient) {
-    tokenClient = window.google.accounts.oauth2.initTokenClient({
-      client_id: clientId,
-      scope: 'https://www.googleapis.com/auth/drive.file',
-      callback: () => {},
-    });
-  }
-  return tokenClient;
+  if (!clientId) return false;
+  tokenClient = window.google.accounts.oauth2.initTokenClient({
+    client_id: clientId,
+    scope: 'https://www.googleapis.com/auth/drive.file',
+    callback: () => {},
+  });
+  return true;
+}
+// Preload the Google script + init the client so interactive auth can fire
+// synchronously from a tap (iOS blocks popups that follow an await).
+export function preload() {
+  if (!getClientId()) return;
+  loadGis().then(() => initSync()).catch(() => {});
 }
 
-// Get a valid token; refresh silently (prompt:'') when possible, or prompt
-// interactively (prompt:'consent') the first time / when asked.
+// MUST be called directly inside a click handler (no awaits before it).
+export function authorize(interactive, onDone) {
+  if (!initSync()) { onDone && onDone(new Error('Drive not ready yet — try again in a few seconds.')); return; }
+  tokenClient.callback = (resp) => {
+    if (resp && resp.access_token) { stash(resp); onDone && onDone(null); }
+    else onDone && onDone(new Error((resp && resp.error) || 'Authorisation failed'));
+  };
+  try { tokenClient.requestAccessToken({ prompt: interactive ? 'consent' : '' }); }
+  catch (e) { onDone && onDone(e); }
+}
+
+// Async token (for silent refresh during API calls).
 export async function ensureToken(interactive = false) {
   if (!interactive && hasToken()) return accessToken;
-  const client = await initClient();
+  await loadGis();
+  if (!initSync()) throw new Error('Add your Google Client ID in Settings → Sync ✎.');
   return new Promise((resolve, reject) => {
-    client.callback = (resp) => {
-      if (resp && resp.access_token) {
-        accessToken = resp.access_token;
-        tokenExp = Date.now() + ((resp.expires_in ? resp.expires_in : 3600) * 1000);
-        sessionStorage.setItem('mind.driveTok', accessToken);
-        sessionStorage.setItem('mind.driveExp', String(tokenExp));
-        resolve(accessToken);
-      } else { reject(new Error((resp && resp.error) || 'Drive authorisation failed')); }
+    tokenClient.callback = (resp) => {
+      if (resp && resp.access_token) { stash(resp); resolve(accessToken); }
+      else reject(new Error((resp && resp.error) || 'Drive authorisation failed'));
     };
-    try { client.requestAccessToken({ prompt: interactive ? 'consent' : '' }); }
+    try { tokenClient.requestAccessToken({ prompt: interactive ? 'consent' : '' }); }
     catch (e) { reject(e); }
   });
 }

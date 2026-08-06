@@ -612,6 +612,7 @@ function wire() {
   $('#importBtn').addEventListener('click', () => $('#importInput').click());
   $('#importInput').addEventListener('change', (e) => { if (e.target.files[0]) importJSON(e.target.files[0]); });
   $('#fbConnect').addEventListener('click', connectFirebase);
+  $('#driveConnect').addEventListener('click', connectDrive);
 
   // theme
   $('#themeSeg').addEventListener('click', (e) => {
@@ -897,11 +898,16 @@ async function connectFirebase() {
   if (raw) { try { fb.saveConfig(JSON.parse(raw)); } catch { toast('Config is not valid JSON'); return; } }
   if (!_fbInited) { await fb.init(handleAuth); _fbInited = true; }
   fb.signIn((s) => { $('#fbStatus').textContent = s; });
-  // authorise Drive for files (silent refresh afterwards) if a Client ID is set
-  if (drive.hasClientId()) {
-    try { await drive.ensureToken(true); toast('Drive connected — files will sync'); uploadPendingFiles(); }
-    catch (e) { toast('Drive: ' + e.message); }
-  }
+}
+// Separate button so the Drive consent popup fires directly from the tap.
+function connectDrive() {
+  if (!drive.hasClientId()) { toast('Add your Google Client ID in Sync ✎ first'); return; }
+  toast('Opening Google Drive permission…');
+  drive.authorize(true, (err) => {
+    if (err) { toast('Drive: ' + err.message); return; }
+    toast('Drive connected — files will sync');
+    uploadPendingFiles();
+  });
 }
 
 /* ---------------- PWA ---------------- */
@@ -911,6 +917,7 @@ if ('serviceWorker' in navigator) {
 
 wire();
 bindSettings();
+drive.preload();
 setTheme(localStorage.getItem('mind.theme') || 'dark');
 renderViews();
 load();
