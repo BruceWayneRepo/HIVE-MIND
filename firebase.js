@@ -68,18 +68,14 @@ export async function signIn(onStatus = () => {}) {
   onStatus('Opening Google sign-in…');
   try {
     const provider = new authMod.GoogleAuthProvider();
-    provider.addScope('https://www.googleapis.com/auth/drive.file');
-    provider.setCustomParameters({ prompt: 'consent', include_granted_scopes: 'true' });
     const result = await authMod.signInWithPopup(auth, provider);
-    const cred = authMod.GoogleAuthProvider.credentialFromResult(result);
-    driveToken = (cred && cred.accessToken) || '';
+    driveToken = '';
     onStatus('Signed in. Syncing…');
   } catch (e) {
     const code = (e && e.code) || '';
     if (code.includes('popup-blocked') || code.includes('popup-closed') || code.includes('cancelled')) {
       try {
         const provider = new authMod.GoogleAuthProvider();
-        provider.addScope('https://www.googleapis.com/auth/drive.file');
         await authMod.signInWithRedirect(auth, provider);
       } catch (e2) { onStatus('Sign-in failed: ' + e2.message); }
     } else if (code.includes('unauthorized-domain')) {

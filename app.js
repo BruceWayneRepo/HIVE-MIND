@@ -58,6 +58,7 @@ async function uploadPendingFiles() {
   if (!drive.hasToken() && drive.hasClientId()) { await drive.ensureToken(false).catch(() => {}); }
   if (!drive.hasToken()) return;
   for (const item of ITEMS) {
+    if (item.deleted) continue;
     if (item.blobId && !item.driveId) {
       try {
         const blob = await db.getBlob(item.blobId);
@@ -93,6 +94,13 @@ async function ensureBlob(item) {
   }
   return false;
 }
+async function softDelete(item) {
+  item.deleted = true; item.updated = now();
+  await db.putItem(item);           // keep a tombstone so the listener can't resurrect it
+  ITEMS = await db.allItems(); refresh();
+  fb.push(item).catch(() => {});    // propagate the tombstone to other devices
+}
+
 async function applyRemoteItems(remote) {
   let changed = 0;
   const map = new Map(ITEMS.map((i) => [i.id, i]));
@@ -123,18 +131,21 @@ async function mergeRemote() {
   } catch (e) { /* ignore */ }
 }
 
+function visibleItems() { return ITEMS.filter((i) => !i.deleted); }
 function currentList() {
-  let list = runSearch(ITEMS, query, filters);
-  if (filters.space === '__serendipity') return serendipity(ITEMS, 12);
+  const vis = visibleItems();
+  let list = runSearch(vis, query, filters);
+  if (filters.space === '__serendipity') return serendipity(vis, 12);
   return list;
 }
 
 async function refresh() {
   const list = currentList();
-  emptyEl.classList.toggle('hidden', ITEMS.length !== 0);
+  const vis = visibleItems();
+  emptyEl.classList.toggle('hidden', vis.length !== 0);
   await renderGrid(grid, list);
   renderRails({
-    items: ITEMS, typeList: $('#typeList'), colorList: $('#colorList'), tagList: $('#tagList'),
+    items: vis, typeList: $('#typeList'), colorList: $('#colorList'), tagList: $('#tagList'),
   });
   renderViews();
   syncActiveStates();
@@ -160,7 +171,7 @@ function syncActiveStates() {
 async function renderSerendipity() {
   const box = $('#serendipity');
   if (filters.space !== '__all' || query || ITEMS.length < 6) { box.classList.add('hidden'); return; }
-  const picks = serendipity(ITEMS, 3);
+  const picks = serendipity(visibleItems(), 3);
   if (!picks.length) { box.classList.add('hidden'); return; }
   box.classList.remove('hidden');
   box.innerHTML = `<h4>Serendipity — worth another look</h4>
@@ -400,8 +411,7 @@ async function detailAction(act, item) {
   }
   if (act === 'delete') {
     if (!confirm('Delete this from your mind?')) return;
-    await db.deleteItem(item.id); fb.pushDelete(item.id).catch(() => {});
-    ITEMS = await db.allItems(); closeSheets(); refresh(); toast('Deleted');
+    await softDelete(item); closeSheets(); toast('Deleted');
   } else if (act === 'fav') {
     item.fav = !item.fav; item.updated = now(); await db.putItem(item);
     ITEMS = await db.allItems(); openDetail(item.id); refresh();
@@ -440,7 +450,7 @@ async function askMind() {
   if (!ai.hasKey()) { toast('Add an AI key in Settings to ask'); return; }
   toast('Searching your mind…');
   try {
-    const { answer, ids } = await ai.askMind(q, buildIndex(ITEMS));
+    const { answer, ids } = await ai.askMind(q, buildIndex(visibleItems()));
     const panel = $('#sheetPanel');
     const hits = ids.map((id) => ITEMS.find((i) => i.id === id)).filter(Boolean);
     panel.innerHTML = `<div class="detail-type">ask your mind</div>
@@ -824,8 +834,7 @@ async function ctxAction(act, item) {
   }
   if (act === 'delete') {
     if (!confirm('Delete this from your mind?')) return;
-    await db.deleteItem(item.id); fb.pushDelete(item.id).catch(() => {});
-    ITEMS = await db.allItems(); refresh(); toast('Deleted'); return;
+    await softDelete(item); toast('Deleted'); return;
   }
   if (act === 'summarise') {
     if (!ai.hasKey()) { toast('Add an AI key in Settings → AI ✎'); return; }

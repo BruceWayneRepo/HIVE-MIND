@@ -358,3 +358,26 @@ body[data-theme="clear"] .viewer-body{
 .viewer-body audio{ width:min(520px,92vw); }
 .viewer-body .viewer-edit{ width:min(760px,92vw); min-height:70vh; }
 .viewer-close{ top:calc(14px + env(safe-area-inset-top)); right:20px; font-size:26px; }
+
+/* ============ v3.2: professional polish ============ */
+/* Data section — filled ember buttons, white text (like the reference) */
+.set-block .row{ gap:10px; }
+.set-block .row .ghost,
+.set-block .row .select{
+  background:var(--ember); color:#fff; border-color:var(--ember);
+  font-weight:600; border-radius:10px; padding:11px 16px;
+}
+.set-block .row .ghost:hover,
+.set-block .row .select:hover{ filter:brightness(1.06); border-color:var(--ember); }
+.set-block .row .select{ background-image:none; }
+.set-block .row .select option{ color:#111; background:#fff; }
+
+/* Sync buttons a touch more polished */
+#driveConnect{ margin-top:8px; }
+.signed-in{ margin-top:10px; }
+
+/* subtle card press feedback */
+.card:active{ transform:scale(.985); }
+
+/* refine context menu spacing */
+.ctx-menu button{ font-size:14.5px; padding:11px 13px; }

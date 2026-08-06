@@ -11,7 +11,10 @@ let accessToken = sessionStorage.getItem('mind.driveTok') || null;
 let tokenExp = +(sessionStorage.getItem('mind.driveExp') || 0);
 let tokenClient = null, gisReady = null, folderId = null;
 
-export function getClientId() { return localStorage.getItem('mind.gisClientId') || ''; }
+// Baked-in OAuth Web Client ID so nobody has to paste it. Editable override below.
+const DEFAULT_CLIENT_ID = '579632921168-uhln0e2i67q1p7acpau2cac4ie0ekcne.apps.googleusercontent.com';
+
+export function getClientId() { return localStorage.getItem('mind.gisClientId') || DEFAULT_CLIENT_ID; }
 export function setClientId(id) { id ? localStorage.setItem('mind.gisClientId', id) : localStorage.removeItem('mind.gisClientId'); tokenClient = null; preload(); }
 export function hasClientId() { return !!getClientId(); }
 export function isReady() { return !!tokenClient; }
