@@ -139,3 +139,7 @@ export async function downloadBlob(fileId) {
   const r = await api('https://www.googleapis.com/drive/v3/files/' + fileId + '?alt=media');
   return await r.blob();
 }
+
+export async function deleteFile(fileId) {
+  await api('https://www.googleapis.com/drive/v3/files/' + fileId, { method: 'DELETE' });
+}

@@ -99,6 +99,13 @@ async function softDelete(item) {
   await db.putItem(item);           // keep a tombstone so the listener can't resurrect it
   ITEMS = await db.allItems(); refresh();
   fb.push(item).catch(() => {});    // propagate the tombstone to other devices
+  // remove the actual file from Google Drive too
+  if (item.driveId) {
+    try {
+      if (!drive.hasToken() && drive.hasClientId()) await drive.ensureToken(false);
+      await drive.deleteFile(item.driveId);
+    } catch (e) { /* offline or not authorised — tombstone still hides it everywhere */ }
+  }
 }
 
 async function applyRemoteItems(remote) {
