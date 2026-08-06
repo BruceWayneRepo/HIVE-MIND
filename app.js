@@ -40,15 +40,13 @@ function handleAuth(user) {
   updateSyncUI(user);
   if (user) {
     if (st) st.textContent = 'Synced as ' + (user.email || 'account');
-    const t = fb.getDriveToken();
-    if (t) drive.setToken(t);
+    // Drive token: prefer GIS silent refresh (survives reloads); else fall back
+    if (drive.hasClientId()) { drive.ensureToken(false).catch(() => {}); }
+    else { const t = fb.getDriveToken(); if (t) drive.setToken(t); }
     mergeRemote().then(() => {
       for (const i of ITEMS) fb.push(i).catch(() => {});
       uploadPendingFiles();
-      // live updates from other devices
-      fb.subscribe(async (remote) => {
-        await applyRemoteItems(remote);
-      });
+      fb.subscribe(async (remote) => { await applyRemoteItems(remote); });
     });
   } else {
     if (st) st.textContent = 'Signed out — saving locally.';
@@ -57,6 +55,7 @@ function handleAuth(user) {
 }
 // Upload any files that have a local blob but no Drive id yet.
 async function uploadPendingFiles() {
+  if (!drive.hasToken() && drive.hasClientId()) { await drive.ensureToken(false).catch(() => {}); }
   if (!drive.hasToken()) return;
   for (const item of ITEMS) {
     if (item.blobId && !item.driveId) {
@@ -80,14 +79,17 @@ async function ensureBlob(item) {
     const existing = await db.getBlob(item.blobId);
     if (existing) return true;
   }
-  if (item.driveId && drive.hasToken()) {
-    try {
-      const blob = await drive.downloadBlob(item.driveId);
-      await db.putBlob(item.id, blob);
-      item.blobId = item.id;
-      await db.putItem(item);
-      return true;
-    } catch (e) { return false; }
+  if (item.driveId) {
+    if (!drive.hasToken() && drive.hasClientId()) { await drive.ensureToken(false).catch(() => {}); }
+    if (drive.hasToken()) {
+      try {
+        const blob = await drive.downloadBlob(item.driveId);
+        await db.putBlob(item.id, blob);
+        item.blobId = item.id;
+        await db.putItem(item);
+        return true;
+      } catch (e) { return false; }
+    }
   }
   return false;
 }
@@ -793,6 +795,7 @@ function showCtxMenu(id, x, y) {
   const m = $('#ctxMenu');
   m.innerHTML = `
     <button data-cx="open">Open</button>
+    <button data-cx="rename">Rename</button>
     <button data-cx="edit">Edit text</button>
     <button data-cx="summarise">✦ Auto-summarise</button>
     <button data-cx="fav">${item.fav ? '★ Unfavourite' : '☆ Favourite'}</button>
@@ -808,6 +811,11 @@ function showCtxMenu(id, x, y) {
 function closeCtx() { $('#ctxMenu').classList.add('hidden'); }
 async function ctxAction(act, item) {
   if (act === 'open') return openItem(item.id);
+  if (act === 'rename') {
+    const name = prompt('Rename:', item.title || ''); if (name == null) return;
+    item.title = name; item.updated = now(); await db.putItem(item);
+    ITEMS = await db.allItems(); refresh(); fb.push(item).catch(() => {}); return;
+  }
   if (act === 'edit') return openEditor(item);
   if (act === 'fav') {
     item.fav = !item.fav; item.updated = now(); await db.putItem(item);
@@ -863,6 +871,7 @@ function railFilter(e) {
 /* ---------------- Settings ---------------- */
 function openSettings() {
   $('#aiKey').value = ai.getKey();
+  $('#gisClientId').value = drive.getClientId();
   $('#aiAuto').checked = localStorage.getItem('mind.aiAuto') === '1';
   $('#fbConfig').value = ''; // baked-in config; box is only an override
   const cur = localStorage.getItem('mind.theme') || 'dark';
@@ -874,6 +883,7 @@ function openSettings() {
 }
 function bindSettings() {
   $('#aiKey').addEventListener('change', (e) => { ai.setKey(e.target.value.trim()); toast('AI key saved'); });
+  $('#gisClientId').addEventListener('change', (e) => { drive.setClientId(e.target.value.trim()); toast('Client ID saved'); });
   $('#aiAuto').addEventListener('change', (e) => localStorage.setItem('mind.aiAuto', e.target.checked ? '1' : '0'));
   $('#fbSignOut').addEventListener('click', async () => {
     await fb.signOutUser();
@@ -887,6 +897,11 @@ async function connectFirebase() {
   if (raw) { try { fb.saveConfig(JSON.parse(raw)); } catch { toast('Config is not valid JSON'); return; } }
   if (!_fbInited) { await fb.init(handleAuth); _fbInited = true; }
   fb.signIn((s) => { $('#fbStatus').textContent = s; });
+  // authorise Drive for files (silent refresh afterwards) if a Client ID is set
+  if (drive.hasClientId()) {
+    try { await drive.ensureToken(true); toast('Drive connected — files will sync'); uploadPendingFiles(); }
+    catch (e) { toast('Drive: ' + e.message); }
+  }
 }
 
 /* ---------------- PWA ---------------- */

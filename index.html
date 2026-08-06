@@ -156,9 +156,11 @@
       <div class="set-row-head"><h3>Developer</h3><button id="devClose" class="mini">✕</button></div>
       <label>Anthropic API key</label>
       <input id="aiKey" type="password" placeholder="sk-ant-..." />
+      <label>Google OAuth Client ID — for file sync (Drive)</label>
+      <input id="gisClientId" type="text" placeholder="xxxx.apps.googleusercontent.com" />
       <label>Firebase config (JSON) — optional override</label>
       <textarea id="fbConfig" rows="5" placeholder='{ "apiKey": "...", ... }'></textarea>
-      <p class="hint">Stored only in this browser. The built-in project is already configured — leave Firebase blank unless overriding.</p>
+      <p class="hint">Stored only in this browser. Client ID enables PDFs/images/voice to sync across devices (silent token refresh). Firebase is already configured — leave blank unless overriding.</p>
     </div>
 
     <button class="cap-save save-settings" data-close>Save Settings</button>
